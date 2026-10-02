@@ -294,11 +294,16 @@ export class GeminiService {
       }
 
       case 'getImportedReports': {
-        const reports = await prisma.importedReport.findMany({
-          where: { accountId },
-          orderBy: { importedAt: 'desc' },
-          take: 5,
-        });
+        let reports: any[] = [];
+        try {
+          reports = await prisma.importedReport.findMany({
+            where: { accountId },
+            orderBy: { importedAt: 'desc' },
+            take: 5,
+          });
+        } catch {
+          reports = [];
+        }
         return {
           totalReports: reports.length,
           reports: reports.map((r) => ({
@@ -368,9 +373,14 @@ REGRAS ABSOLUTAS:
     userMessage: string,
     history: Array<{ role: 'user' | 'model'; content: string }> = []
   ): Promise<ChatCompletionResult> {
-    const account = await prisma.amazonAccount.findUnique({
-      where: { id: accountId },
-    });
+    let account: any = null;
+    try {
+      account = await prisma.amazonAccount.findUnique({
+        where: { id: accountId },
+      });
+    } catch {
+      account = null;
+    }
 
     const accountContext = {
       accountName: account?.accountName || 'Conta Padrão',
