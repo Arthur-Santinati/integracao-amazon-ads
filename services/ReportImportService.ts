@@ -57,7 +57,7 @@ export class ReportImportService {
     if (typeof value === 'number') return isNaN(value) ? 0 : value;
     if (!value || typeof value !== 'string') return 0;
 
-    let clean = value.trim().replace(/[R$\s%]/g, '');
+    let clean = value.trim().replace(/[^\d,.-]/g, '');
 
     // Check last occurrence of comma vs dot
     const lastComma = clean.lastIndexOf(',');
