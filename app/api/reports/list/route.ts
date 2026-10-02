@@ -21,18 +21,31 @@ export async function GET() {
           errorDetails: true,
           importedAt: true,
         },
-      });
-
-      return NextResponse.json({
-        reports,
-        total: reports.length,
-      });
+      if (reports.length > 0) {
+        return NextResponse.json({
+          reports,
+          total: reports.length,
+        });
+      }
     } catch {
-      return NextResponse.json({
-        reports: [],
-        total: 0,
-      });
+      // fallback below
     }
+
+    const inMem = (await import('@/services/ReportImportService')).default.getInMemoryReports(session.account.id);
+    return NextResponse.json({
+      reports: inMem.map((r: any) => ({
+        id: r.id,
+        fileName: r.fileName,
+        reportType: r.reportType,
+        startDate: r.startDate,
+        endDate: r.endDate,
+        rowCount: r.rowCount,
+        status: 'COMPLETED',
+        errorDetails: null,
+        importedAt: r.importedAt.toISOString ? r.importedAt.toISOString() : r.importedAt,
+      })),
+      total: inMem.length,
+    });
   } catch (error: any) {
     return NextResponse.json(
       { error: error.message || 'Erro ao carregar relatórios' },

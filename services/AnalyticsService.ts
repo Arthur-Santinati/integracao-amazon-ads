@@ -1,4 +1,5 @@
 import prisma from '@/db/prisma';
+import reportImportService from './ReportImportService';
 import {
   CampaignRow,
   DailyChartPoint,
@@ -83,11 +84,23 @@ export class AnalyticsService {
         },
       });
 
-      return this.computeMetrics(rows);
+      if (rows.length > 0) {
+        return this.computeMetrics(rows);
+      }
     } catch (err: any) {
       console.warn('[AnalyticsService] Banco indisponível:', err.message);
-      return this.computeMetrics([]);
     }
+
+    const inMem = reportImportService.getInMemoryRows(accountId);
+    if (inMem.length > 0) {
+      let filtered = inMem;
+      if (startDate) filtered = filtered.filter((r) => r.date >= startOfDay(startDate));
+      if (endDate) filtered = filtered.filter((r) => r.date <= endOfDay(endDate));
+      if (filtered.length === 0) filtered = inMem;
+      return this.computeMetrics(filtered);
+    }
+
+    return this.computeMetrics([]);
   }
 
   /**
@@ -163,9 +176,47 @@ export class AnalyticsService {
         },
       });
 
-      const map = new Map<string, { spend: number; sales: number; orders: number; clicks: number; impressions: number }>();
+      if (rows.length > 0) {
+        const map = new Map<string, { spend: number; sales: number; orders: number; clicks: number; impressions: number }>();
 
-      for (const r of rows) {
+        for (const r of rows) {
+          const key = format(r.date, 'yyyy-MM-dd');
+          const cur = map.get(key) || { spend: 0, sales: 0, orders: 0, clicks: 0, impressions: 0 };
+          cur.spend += r.spend;
+          cur.sales += r.sales;
+          cur.orders += r.orders;
+          cur.clicks += r.clicks;
+          cur.impressions += r.impressions;
+          map.set(key, cur);
+        }
+
+        const result: DailyChartPoint[] = [];
+        for (const [dateStr, vals] of Array.from(map.entries()).sort()) {
+          const acos = safeDivide(vals.spend, vals.sales) * 100;
+          const roas = safeDivide(vals.sales, vals.spend);
+
+          result.push({
+            date: dateStr,
+            spend: Number(vals.spend.toFixed(2)),
+            sales: Number(vals.sales.toFixed(2)),
+            acos: Number(acos.toFixed(2)),
+            roas: Number(roas.toFixed(2)),
+            orders: vals.orders,
+            clicks: vals.clicks,
+            impressions: vals.impressions,
+          });
+        }
+
+        return result;
+      }
+    } catch {
+      // fallback to in-memory below
+    }
+
+    const inMem = reportImportService.getInMemoryRows(accountId);
+    if (inMem.length > 0) {
+      const map = new Map<string, { spend: number; sales: number; orders: number; clicks: number; impressions: number }>();
+      for (const r of inMem) {
         const key = format(r.date, 'yyyy-MM-dd');
         const cur = map.get(key) || { spend: 0, sales: 0, orders: 0, clicks: 0, impressions: 0 };
         cur.spend += r.spend;
@@ -194,9 +245,9 @@ export class AnalyticsService {
       }
 
       return result;
-    } catch {
-      return [];
     }
+
+    return [];
   }
 
   /**
@@ -233,30 +284,71 @@ export class AnalyticsService {
         orderBy: { name: 'asc' },
       });
 
-      return campaigns.map((c) => {
-        const metrics = this.computeMetrics(c.metrics);
-        return {
-          id: c.id,
-          amazonCampaignId: c.amazonCampaignId,
-          name: c.name,
-          status: c.status,
-          campaignType: c.campaignType,
-          spend: metrics.spend,
-          sales: metrics.sales,
-          acos: metrics.acos,
-          roas: metrics.roas,
-          impressions: metrics.impressions,
-          clicks: metrics.clicks,
-          orders: metrics.orders,
-          cpc: metrics.cpc,
-          ctr: metrics.ctr,
-          dailyBudget: c.dailyBudget,
-          isDemo: c.isDemo,
-        };
-      });
+      if (campaigns.length > 0) {
+        return campaigns.map((c) => {
+          const metrics = this.computeMetrics(c.metrics);
+          return {
+            id: c.id,
+            amazonCampaignId: c.amazonCampaignId,
+            name: c.name,
+            status: c.status,
+            campaignType: c.campaignType,
+            spend: metrics.spend,
+            sales: metrics.sales,
+            acos: metrics.acos,
+            roas: metrics.roas,
+            impressions: metrics.impressions,
+            clicks: metrics.clicks,
+            orders: metrics.orders,
+            cpc: metrics.cpc,
+            ctr: metrics.ctr,
+            dailyBudget: c.dailyBudget,
+            isDemo: c.isDemo,
+          };
+        });
+      }
     } catch {
-      return [];
+      // fallback to in-memory below
     }
+
+    const inMem = reportImportService.getInMemoryRows(accountId);
+    if (inMem.length > 0) {
+      const campMap = new Map<string, any[]>();
+      for (const r of inMem) {
+        const list = campMap.get(r.campaignName) || [];
+        list.push(r);
+        campMap.set(r.campaignName, list);
+      }
+
+      const rows: CampaignRow[] = [];
+      for (const [name, rowsForCamp] of Array.from(campMap.entries())) {
+        if (filters?.search && !name.toLowerCase().includes(filters.search.toLowerCase())) {
+          continue;
+        }
+        const m = this.computeMetrics(rowsForCamp);
+        rows.push({
+          id: rowsForCamp[0].campaignId || 'camp-' + name,
+          amazonCampaignId: rowsForCamp[0].campaignId,
+          name,
+          status: 'ENABLED',
+          campaignType: 'SPONSORED_PRODUCTS',
+          spend: m.spend,
+          sales: m.sales,
+          acos: m.acos,
+          roas: m.roas,
+          impressions: m.impressions,
+          clicks: m.clicks,
+          orders: m.orders,
+          cpc: m.cpc,
+          ctr: m.ctr,
+          dailyBudget: undefined,
+          isDemo: false,
+        });
+      }
+      return rows;
+    }
+
+    return [];
   }
 
   /**

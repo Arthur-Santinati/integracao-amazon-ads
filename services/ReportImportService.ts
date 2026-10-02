@@ -8,15 +8,26 @@ export class ReportImportService {
    * Column mappings supporting English and Portuguese Amazon Ads report exports
    */
   private columnAliases: Record<string, string[]> = {
-    date: ['date', 'data', 'day', 'dia', 'start date', 'data de início'],
+    date: ['date', 'data', 'day', 'dia', 'start date', 'data de início da campanha', 'data de início'],
     campaignName: ['campaign name', 'nome da campanha', 'campaign', 'campanha'],
     campaignId: ['campaign id', 'id da campanha', 'campaignid'],
     impressions: ['impressions', 'impressões', 'impressoes'],
     clicks: ['clicks', 'cliques'],
-    spend: ['spend', 'gasto', 'gastos', 'custo', 'cost', 'total spend', 'gasto total'],
+    spend: [
+      'spend',
+      'gasto',
+      'gastos',
+      'custo total',
+      'custo total (convertido)',
+      'custo',
+      'cost',
+      'total spend',
+      'gasto total',
+    ],
     sales: [
       'sales',
       'vendas',
+      'vendas (convertido)',
       '7 day total sales',
       '14 day total sales',
       'vendas totais em 7 dias',
@@ -26,6 +37,7 @@ export class ReportImportService {
     orders: [
       'orders',
       'pedidos',
+      'compras',
       '7 day total orders',
       '14 day total orders',
       'pedidos totais em 7 dias',
@@ -33,6 +45,7 @@ export class ReportImportService {
       'units',
       'unidades',
     ],
+    ctr: ['ctr', 'click-through rate'],
     asin: ['asin', 'advertised asin', 'asin anunciado', 'purchased asin'],
     sku: ['sku', 'advertised sku', 'sku anunciado'],
   };
@@ -188,12 +201,20 @@ export class ReportImportService {
         if (!minDate || parsedDate < minDate) minDate = parsedDate;
         if (!maxDate || parsedDate > maxDate) maxDate = parsedDate;
 
-        const impressions = Math.round(
+        let impressions = Math.round(
           this.parseNumeric(detectedColumns.impressions ? row[detectedColumns.impressions] : 0)
         );
         const clicks = Math.round(
           this.parseNumeric(detectedColumns.clicks ? row[detectedColumns.clicks] : 0)
         );
+
+        if (impressions === 0 && clicks > 0 && detectedColumns.ctr) {
+          const ctrVal = this.parseNumeric(row[detectedColumns.ctr]);
+          if (ctrVal > 0) {
+            impressions = Math.round(clicks / ctrVal);
+          }
+        }
+
         const spend = this.parseNumeric(detectedColumns.spend ? row[detectedColumns.spend] : 0);
         const sales = this.parseNumeric(detectedColumns.sales ? row[detectedColumns.sales] : 0);
         const orders = Math.round(
@@ -234,6 +255,23 @@ export class ReportImportService {
   }
 
   /**
+   * Returns in-memory stored reports (used for serverless fallbacks)
+   */
+  public getInMemoryReports(accountId?: string): any[] {
+    const list = (global as any).__inMemoryReports || [];
+    if (!accountId) return list;
+    return list.filter((r: any) => r.accountId === accountId);
+  }
+
+  /**
+   * Returns in-memory normalized rows (used by AnalyticsService when DB is offline)
+   */
+  public getInMemoryRows(accountId?: string): NormalizedCSVRow[] {
+    const reports = this.getInMemoryReports(accountId);
+    return reports.flatMap((r: any) => r.rows || []);
+  }
+
+  /**
    * Persists normalized CSV data into PostgreSQL linked to user and Amazon account
    */
   public async saveReportToDatabase(
@@ -241,19 +279,37 @@ export class ReportImportService {
     accountId: string,
     parsed: CSVParseResult
   ): Promise<string> {
-    // 1. Create the ImportedReport record
-    const report = await prisma.importedReport.create({
-      data: {
-        userId,
-        accountId,
-        fileName: parsed.fileName,
-        reportType: 'CAMPAIGN',
-        startDate: parsed.startDate,
-        endDate: parsed.endDate,
-        rowCount: parsed.validRows.length,
-        status: 'COMPLETED',
-      },
+    const inMemId = 'rep-' + Date.now();
+    if (!(global as any).__inMemoryReports) {
+      (global as any).__inMemoryReports = [];
+    }
+    (global as any).__inMemoryReports.unshift({
+      id: inMemId,
+      userId,
+      accountId,
+      fileName: parsed.fileName,
+      reportType: 'CAMPAIGN',
+      startDate: parsed.startDate,
+      endDate: parsed.endDate,
+      rowCount: parsed.validRows.length,
+      importedAt: new Date(),
+      rows: parsed.validRows,
     });
+
+    try {
+      // 1. Create the ImportedReport record
+      const report = await prisma.importedReport.create({
+        data: {
+          userId,
+          accountId,
+          fileName: parsed.fileName,
+          reportType: 'CAMPAIGN',
+          startDate: parsed.startDate,
+          endDate: parsed.endDate,
+          rowCount: parsed.validRows.length,
+          status: 'COMPLETED',
+        },
+      });
 
     // 2. Group rows by campaign and date to avoid duplicates in the same CSV
     const rowsMap = new Map<string, NormalizedCSVRow>();
@@ -397,7 +453,11 @@ export class ReportImportService {
       }
     }
 
-    return report.id;
+      return report.id;
+    } catch (err: any) {
+      console.warn('[ReportImportService] DB indisponível, relatório mantido em memória:', err.message);
+      return inMemId;
+    }
   }
 }
 

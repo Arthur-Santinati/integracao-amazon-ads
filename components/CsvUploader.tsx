@@ -28,13 +28,9 @@ export function CsvUploader({ onSuccess }: CsvUploaderProps) {
     setDragOver(false);
     if (e.dataTransfer.files && e.dataTransfer.files[0]) {
       const selected = e.dataTransfer.files[0];
-      if (selected.name.endsWith('.csv') || selected.type === 'text/csv') {
-        setFile(selected);
-        setError(null);
-        setResult(null);
-      } else {
-        setError('Por favor, selecione um arquivo válido no formato .csv');
-      }
+      setFile(selected);
+      setError(null);
+      setResult(null);
     }
   };
 
@@ -141,7 +137,7 @@ export function CsvUploader({ onSuccess }: CsvUploaderProps) {
         <input
           ref={inputRef}
           type="file"
-          accept=".csv,text/csv"
+          accept=".csv,text/csv,text/plain,*"
           onChange={handleFileChange}
           className="hidden"
         />
