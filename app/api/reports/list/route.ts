@@ -21,6 +21,8 @@ export async function GET() {
           errorDetails: true,
           importedAt: true,
         },
+      });
+
       if (reports.length > 0) {
         return NextResponse.json({
           reports,
