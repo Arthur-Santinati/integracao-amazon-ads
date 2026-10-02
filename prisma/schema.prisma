@@ -1,0 +1,199 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id              String           @id @default(cuid())
+  email           String           @unique
+  name            String?
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+  amazonAccounts  AmazonAccount[]
+  importedReports ImportedReport[]
+  chats           Chat[]
+
+  @@map("users")
+}
+
+model AmazonAccount {
+  id            String           @id @default(cuid())
+  userId        String
+  user          User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  profileId     String?          // Amazon Advertising Profile ID
+  accountName   String
+  marketplaceId String?          // e.g. A2Q3Y263D00KWC (BR), ATVPDKIKX0DER (US)
+  region        String           @default("NA") // NA, EU, FE
+  currency      String           @default("BRL")
+  timezone      String           @default("America/Sao_Paulo")
+  isDemo        Boolean          @default(false)
+  status        String           @default("DISCONNECTED") // CONNECTED, DISCONNECTED, EXPIRED, ERROR
+  lastSyncAt    DateTime?
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+  token         AmazonToken?
+  campaigns     Campaign[]
+  products      Product[]
+  reports       ImportedReport[]
+
+  @@index([userId])
+  @@map("amazon_accounts")
+}
+
+model AmazonToken {
+  id           String        @id @default(cuid())
+  accountId    String        @unique
+  account      AmazonAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  accessToken  String
+  refreshToken String
+  tokenType    String        @default("bearer")
+  expiresIn    Int
+  expiresAt    DateTime
+  scope        String?
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  @@map("amazon_tokens")
+}
+
+model Campaign {
+  id               String           @id @default(cuid())
+  accountId        String
+  account          AmazonAccount    @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  amazonCampaignId String?
+  name             String
+  campaignType     String           @default("SPONSORED_PRODUCTS") // SPONSORED_PRODUCTS, SPONSORED_BRANDS, SPONSORED_DISPLAY
+  targetingType    String?          // MANUAL, AUTO
+  status           String           @default("ENABLED") // ENABLED, PAUSED, ARCHIVED
+  dailyBudget      Float?
+  startDate        DateTime?
+  endDate          DateTime?
+  isDemo           Boolean          @default(false)
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+  metrics          CampaignMetric[]
+
+  @@index([accountId])
+  @@index([amazonCampaignId])
+  @@map("campaigns")
+}
+
+model CampaignMetric {
+  id             String          @id @default(cuid())
+  campaignId     String
+  campaign       Campaign        @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  date           DateTime
+  impressions    Int             @default(0)
+  clicks         Int             @default(0)
+  spend          Float           @default(0)
+  sales          Float           @default(0)
+  orders         Int             @default(0)
+  units          Int             @default(0)
+  cpc            Float           @default(0)
+  acos           Float           @default(0)
+  roas           Float           @default(0)
+  ctr            Float           @default(0)
+  conversionRate Float           @default(0)
+  reportId       String?
+  report         ImportedReport? @relation(fields: [reportId], references: [id], onDelete: SetNull)
+  createdAt      DateTime        @default(now())
+
+  @@unique([campaignId, date])
+  @@index([date])
+  @@index([campaignId])
+  @@map("campaign_metrics")
+}
+
+model Product {
+  id          String          @id @default(cuid())
+  accountId   String
+  account     AmazonAccount   @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  asin        String
+  sku         String?
+  title       String
+  imageUrl    String?
+  price       Float?
+  isDemo      Boolean         @default(false)
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+  metrics     ProductMetric[]
+
+  @@unique([accountId, asin])
+  @@index([accountId])
+  @@index([asin])
+  @@map("products")
+}
+
+model ProductMetric {
+  id          String   @id @default(cuid())
+  productId   String
+  product     Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  date        DateTime
+  impressions Int      @default(0)
+  clicks      Int      @default(0)
+  spend       Float    @default(0)
+  sales       Float    @default(0)
+  orders      Int      @default(0)
+  cpc         Float    @default(0)
+  acos        Float    @default(0)
+  roas        Float    @default(0)
+  reportId    String?
+  createdAt   DateTime @default(now())
+
+  @@unique([productId, date])
+  @@index([productId])
+  @@index([date])
+  @@map("product_metrics")
+}
+
+model ImportedReport {
+  id              String           @id @default(cuid())
+  userId          String
+  user            User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accountId       String
+  account         AmazonAccount    @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  fileName        String
+  reportType      String           // CAMPAIGN, SEARCH_TERM, PRODUCT
+  startDate       DateTime?
+  endDate         DateTime?
+  rowCount        Int              @default(0)
+  status          String           @default("COMPLETED") // PROCESSING, COMPLETED, FAILED
+  errorDetails    String?
+  importedAt      DateTime         @default(now())
+  campaignMetrics CampaignMetric[]
+
+  @@index([userId])
+  @@index([accountId])
+  @@map("imported_reports")
+}
+
+model Chat {
+  id        String        @id @default(cuid())
+  userId    String
+  user      User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title     String        @default("Nova Conversa")
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+  messages  ChatMessage[]
+
+  @@index([userId])
+  @@map("chats")
+}
+
+model ChatMessage {
+  id            String   @id @default(cuid())
+  chatId        String
+  chat          Chat     @relation(fields: [chatId], references: [id], onDelete: Cascade)
+  role          String   // "user", "model", "system"
+  content       String
+  toolCalls     String?  // JSON formatted tool call invocations
+  toolResponses String?  // JSON formatted tool responses
+  createdAt     DateTime @default(now())
+
+  @@index([chatId])
+  @@map("chat_messages")
+}
